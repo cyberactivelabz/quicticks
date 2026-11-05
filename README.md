@@ -24,7 +24,7 @@ Orders are always created as `pending`; the server calculates the total from the
 
 Configure Moniepoint to POST its signed payment event to `/api/payments/moniepoint/webhook` with `reference` and `status: paid` in the JSON body and the HMAC-SHA256 hex digest in `X-Moniepoint-Signature`. The webhook is idempotent: a paid order receives tickets only once. Pending bank-transfer orders can also be marked paid from the admin dashboard.
 
-The API does not trust client totals, issues QR PNGs server-side, validates each ticket once at `/scan.html`, and sends security headers. `RESEND_API_KEY` and `MONIEPOINT_API_URL` are reserved for provider-specific delivery/checkout configuration; no secret is committed to this repository.
+The API does not trust client totals, issues QR PNGs server-side, validates each ticket once at `/scan.html`, and sends security headers. Set `RESEND_API_KEY` and `EMAIL_FROM` to a verified sender to send an HTML receipt with QR codes through Resend after manual payment confirmation. Gmail SMTP remains available as a fallback. Never commit provider credentials.
 
 ## Admin and deployment
 
@@ -33,4 +33,3 @@ The API does not trust client totals, issues QR PNGs server-side, validates each
 - `Dockerfile`: builds a static Go container suitable for Render or Fly.io.
 - `DATABASE_PATH`: use a persistent disk in production; SQLite is not suitable for ephemeral deployment storage.
 
-Run tests with `go test ./...`.

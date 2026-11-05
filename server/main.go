@@ -11,9 +11,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"log"
 	"net/http"
+	"net/smtp"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -27,7 +29,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-type config struct{ port, dbPath, cors, adminUser, adminPassword, sessionSecret, moniepointURL, moniepointKey, webhookSecret string }
+type config struct{ port, dbPath, cors, adminUser, adminPassword, sessionSecret, moniepointURL, moniepointKey, webhookSecret, resendKey, emailFrom, smtpHost, smtpPort, smtpUser, smtpPassword string }
 type app struct {
 	db      *sql.DB
 	cfg     config
@@ -38,11 +40,13 @@ type limiter struct {
 	hits map[string][]time.Time
 }
 type orderInput struct {
-	TicketType string `json:"ticket_type"`
-	Quantity   int    `json:"quantity"`
-	Name       string `json:"name"`
-	Phone      string `json:"phone"`
-	Email      string `json:"email"`
+	TicketType     string `json:"ticket_type"`
+	Quantity       int    `json:"quantity"`
+	MaleQuantity   int    `json:"male_quantity"`
+	FemaleQuantity int    `json:"female_quantity"`
+	Name           string `json:"name"`
+	Phone          string `json:"phone"`
+	Email          string `json:"email"`
 }
 type order struct {
 	Reference  string   `json:"reference"`
@@ -69,7 +73,7 @@ func getenv(k, fallback string) string {
 	return fallback
 }
 func main() {
-	cfg := config{getenv("PORT", "8080"), getenv("DATABASE_PATH", "./data/quicticks.db"), getenv("CORS_ORIGIN", "http://localhost:8080"), os.Getenv("ADMIN_USERNAME"), os.Getenv("ADMIN_PASSWORD"), os.Getenv("SESSION_SECRET"), os.Getenv("MONIEPOINT_API_URL"), os.Getenv("MONIEPOINT_API_KEY"), os.Getenv("MONIEPOINT_WEBHOOK_SECRET")}
+	cfg := config{getenv("PORT", "8080"), getenv("DATABASE_PATH", "./data/quicticks.db"), getenv("CORS_ORIGIN", "http://localhost:8080"), os.Getenv("ADMIN_USERNAME"), os.Getenv("ADMIN_PASSWORD"), os.Getenv("SESSION_SECRET"), os.Getenv("MONIEPOINT_API_URL"), os.Getenv("MONIEPOINT_API_KEY"), os.Getenv("MONIEPOINT_WEBHOOK_SECRET"), os.Getenv("RESEND_API_KEY"), getenv("EMAIL_FROM", "tickets@example.com"), getenv("SMTP_HOST", "smtp.gmail.com"), getenv("SMTP_PORT", "587"), os.Getenv("SMTP_USER"), os.Getenv("SMTP_PASSWORD")}
 	if cfg.adminUser == "" || cfg.adminPassword == "" || len(cfg.sessionSecret) < 32 {
 		log.Fatal("ADMIN_USERNAME, ADMIN_PASSWORD and a 32+ character SESSION_SECRET are required")
 	}
@@ -95,6 +99,7 @@ func (a *app) migrate() error {
 func (a *app) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/orders", a.orders)
+	mux.HandleFunc("/api/orders/find", a.findOrder)
 	mux.HandleFunc("/api/orders/", a.orderByReference)
 	mux.HandleFunc("/api/payments/moniepoint/webhook", a.webhook)
 	mux.HandleFunc("/api/admin/login", a.login)
@@ -148,7 +153,8 @@ func (a *app) orders(w http.ResponseWriter, r *http.Request) {
 	in.Name = strings.TrimSpace(in.Name)
 	in.Phone = regexp.MustCompile(`[\s-]`).ReplaceAllString(in.Phone, "")
 	in.Email = strings.TrimSpace(strings.ToLower(in.Email))
-	if in.TicketType != "male" && in.TicketType != "female" || in.Quantity < 1 || in.Quantity > 10 || len(in.Name) < 2 || !regexp.MustCompile(`^\+?(234|0)\d{10}$`).MatchString(in.Phone) || !regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`).MatchString(in.Email) {
+	ticketType, quantity, total, err := normalizeTicketMix(in)
+	if err != nil || len(in.Name) < 2 || !regexp.MustCompile(`^\+?(234|0)\d{10}$`).MatchString(in.Phone) || !regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`).MatchString(in.Email) {
 		jsonOut(w, 400, map[string]string{"error": "Enter valid order details"})
 		return
 	}
@@ -158,7 +164,7 @@ func (a *app) orders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var existing order
-	err := a.db.QueryRow(`SELECT reference,status,ticket_type,quantity,total,name,phone,email,created_at FROM orders WHERE idempotency_key=?`, idem).Scan(&existing.Reference, &existing.Status, &existing.TicketType, &existing.Quantity, &existing.Total, &existing.Name, &existing.Phone, &existing.Email, &existing.CreatedAt)
+	err = a.db.QueryRow(`SELECT reference,status,ticket_type,quantity,total,name,phone,email,created_at FROM orders WHERE idempotency_key=?`, idem).Scan(&existing.Reference, &existing.Status, &existing.TicketType, &existing.Quantity, &existing.Total, &existing.Name, &existing.Phone, &existing.Email, &existing.CreatedAt)
 	if err == nil {
 		jsonOut(w, 200, existing)
 		return
@@ -168,25 +174,79 @@ func (a *app) orders(w http.ResponseWriter, r *http.Request) {
 		jsonOut(w, 409, map[string]string{"error": "Sales are currently closed"})
 		return
 	}
-	price, capacity, err := a.priceAndCapacity(in.TicketType)
+	_, _, err = a.priceAndCapacity("male")
 	if err != nil {
 		jsonOut(w, 500, map[string]string{"error": "Could not load prices"})
 		return
 	}
 	var reserved int
-	a.db.QueryRow(`SELECT COALESCE(SUM(quantity),0) FROM orders WHERE ticket_type=? AND status IN ('pending','paid')`, in.TicketType).Scan(&reserved)
-	if reserved+in.Quantity > capacity {
+	a.db.QueryRow(`SELECT COALESCE(SUM(quantity),0) FROM orders WHERE status IN ('pending','paid')`).Scan(&reserved)
+	if reserved+quantity > 1000 {
 		jsonOut(w, 409, map[string]string{"error": "Tickets are sold out"})
 		return
 	}
 	ref := newReference()
-	_, err = a.db.Exec(`INSERT INTO orders(reference,idempotency_key,status,ticket_type,quantity,total,name,phone,email,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, ref, idem, "pending", in.TicketType, in.Quantity, price*in.Quantity, in.Name, in.Phone, in.Email, time.Now().UTC().Format(time.RFC3339))
+	_, err = a.db.Exec(`INSERT INTO orders(reference,idempotency_key,status,ticket_type,quantity,total,name,phone,email,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, ref, idem, "pending", ticketType, quantity, total, in.Name, in.Phone, in.Email, time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		jsonOut(w, 409, map[string]string{"error": "Order already exists"})
 		return
 	}
-	jsonOut(w, 201, order{Reference: ref, Status: "pending", TicketType: in.TicketType, Quantity: in.Quantity, Total: price * in.Quantity, Name: in.Name, Phone: in.Phone, Email: in.Email})
+	jsonOut(w, 201, order{Reference: ref, Status: "pending", TicketType: ticketType, Quantity: quantity, Total: total, Name: in.Name, Phone: in.Phone, Email: in.Email})
 }
+
+func normalizeTicketMix(in orderInput) (string, int, int, error) {
+	male, female := in.MaleQuantity, in.FemaleQuantity
+	if male == 0 && female == 0 {
+		if in.TicketType == "male" {
+			male = in.Quantity
+		}
+		if in.TicketType == "female" {
+			female = in.Quantity
+		}
+	}
+	if male < 0 || female < 0 || male+female < 1 || male+female > 10 {
+		return "", 0, 0, errors.New("invalid ticket quantities")
+	}
+	malePrice, femalePrice := 2000, 1000
+	if male > 0 && female > 0 {
+		return fmt.Sprintf("male:%d,female:%d", male, female), male + female, male*malePrice + female*femalePrice, nil
+	}
+	if male > 0 {
+		return "male", male, male * malePrice, nil
+	}
+	return "female", female, female * femalePrice, nil
+}
+func (a *app) findOrder(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" || !a.allow(r, 20, time.Minute) {
+		jsonOut(w, 429, map[string]string{"error": "Lookup unavailable"})
+		return
+	}
+	var input struct {
+		Email string `json:"email"`
+		Phone string `json:"phone"`
+	}
+	if json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&input) != nil {
+		jsonOut(w, 400, map[string]string{"error": "Invalid lookup request"})
+		return
+	}
+	input.Email = strings.TrimSpace(strings.ToLower(input.Email))
+	input.Phone = regexp.MustCompile(`[\s-]`).ReplaceAllString(input.Phone, "")
+	var found order
+	err := a.db.QueryRow(`SELECT reference,status,ticket_type,quantity,total,name,phone,email,created_at FROM orders WHERE email=? AND phone=? ORDER BY created_at DESC LIMIT 1`, input.Email, input.Phone).Scan(&found.Reference, &found.Status, &found.TicketType, &found.Quantity, &found.Total, &found.Name, &found.Phone, &found.Email, &found.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		jsonOut(w, 404, map[string]string{"error": "No order found for those details"})
+		return
+	}
+	if err != nil {
+		jsonOut(w, 500, map[string]string{"error": "Could not find order"})
+		return
+	}
+	if found.Status == "paid" {
+		found.Tickets = a.tickets(found.Reference)
+	}
+	jsonOut(w, 200, found)
+}
+
 func (a *app) priceAndCapacity(kind string) (int, int, error) {
 	var p, c int
 	err := a.db.QueryRow(`SELECT CAST((SELECT value FROM settings WHERE key=?) AS INTEGER),CAST((SELECT value FROM settings WHERE key=?) AS INTEGER)`, kind+"_price", kind+"_capacity").Scan(&p, &c)
@@ -280,7 +340,72 @@ func (a *app) markPaid(ref string) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	if err := a.sendReceipt(ref); err != nil {
+		log.Printf("email receipt failed for %s: %v", ref, err)
+	}
+	return nil
+}
+
+func (a *app) sendReceipt(ref string) error {
+	var o order
+	if err := a.db.QueryRow(`SELECT reference,status,ticket_type,quantity,total,name,phone,email,created_at FROM orders WHERE reference=?`, ref).Scan(&o.Reference, &o.Status, &o.TicketType, &o.Quantity, &o.Total, &o.Name, &o.Phone, &o.Email, &o.CreatedAt); err != nil {
+		return err
+	}
+	o.Tickets = a.tickets(ref)
+	body := `<h2>The Vibez and Fun Party 3.0</h2><p>Hi ` + html.EscapeString(o.Name) + `, your payment was confirmed.</p>`
+	body += `<p>Order reference: <strong>` + html.EscapeString(o.Reference) + `</strong><br>Ticket type: ` + html.EscapeString(o.TicketType) + `<br>Total: ₦` + strconv.Itoa(o.Total) + `</p>`
+	for _, t := range o.Tickets {
+		body += `<hr><p><strong>Ticket code: ` + html.EscapeString(t.Code) + `</strong></p><img width="220" height="220" alt="QR code for ` + html.EscapeString(t.Code) + `" src="data:image/png;base64,` + t.QRPng + `">`
+	}
+	payload := struct {
+		From    string `json:"from"`
+		To      string `json:"to"`
+		Subject string `json:"subject"`
+		HTML    string `json:"html"`
+	}{a.cfg.emailFrom, o.Email, "Your Vibez and Fun Party 3.0 ticket", body}
+	if a.cfg.smtpUser != "" && a.cfg.smtpPassword != "" {
+		return a.sendSMTP(payload.To, payload.Subject, payload.HTML)
+	}
+	if a.cfg.resendKey != "" {
+		return a.sendAPIEmail("https://api.resend.com/emails", a.cfg.resendKey, "resend", payload)
+	}
+	return nil
+}
+
+func (a *app) sendAPIEmail(endpoint, key, provider string, payload interface{}) error {
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(string(encoded)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Content-Type", "application/json")
+	res, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		responseBody, _ := io.ReadAll(io.LimitReader(res.Body, 2048))
+		return fmt.Errorf("%s returned %s: %s", provider, res.Status, strings.TrimSpace(string(responseBody)))
+	}
+	return nil
+}
+
+func (a *app) sendSMTP(to, subject, body string) error {
+	message := "From: " + a.cfg.emailFrom + "\r\n" +
+		"To: " + to + "\r\n" +
+		"Subject: " + subject + "\r\n" +
+		"MIME-Version: 1.0\r\n" +
+		"Content-Type: text/html; charset=UTF-8\r\n\r\n" + body
+	auth := smtp.PlainAuth("", a.cfg.smtpUser, a.cfg.smtpPassword, a.cfg.smtpHost)
+	return smtp.SendMail(a.cfg.smtpHost+":"+a.cfg.smtpPort, auth, a.cfg.emailFrom, []string{to}, []byte(message))
 }
 func (a *app) login(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" || !a.allow(r, 5, 15*time.Minute) {

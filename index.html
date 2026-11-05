@@ -11,7 +11,7 @@
 </head>
 <body>
   <main>
-    <header class="brand"><span>Hypeman <b>Connect</b></span><a href="#tickets">Get tickets</a></header>
+    <header class="brand"><span>Hypeman <b>Connect</b></span><nav style="display:flex;gap:8px"><a href="#tickets">Get tickets</a><a href="admin.html">Admin</a></nav></header>
     <section class="hero" aria-labelledby="event-title">
       <img class="hero-poster" src="party-poster.jpg" alt="The Vibez and Fun Party 3.0 event poster" onerror="this.hidden=true;document.querySelector('.hero-fallback').hidden=false">
       <div class="hero-fallback" hidden>
@@ -35,12 +35,33 @@
     <section id="venue"><div class="venue"><h3>Aiyeyemi Palace Hotel</h3><p>Plot 2, Ogudu GRA, Ajase Ipo, Kwara State, Nigeria</p></div></section>
     <section id="tickets">
       <h2>Pick your ticket</h2>
-      <form id="order-form" novalidate>
+      <div id="auth-panel" class="pay">
+        <h3>Sign in to continue</h3>
+        <form id="auth-form" novalidate>
+          <label>Email<input id="auth-email" type="email" required autocomplete="email"></label>
+          <label>Password<input id="auth-password" type="password" required autocomplete="current-password"></label>
+          <p class="err" id="auth-error" role="alert"></p>
+          <button class="cta" type="submit">Sign in</button>
+          <button class="ghost" id="signup" type="button">Create account</button>
+        </form>
+      </div>
+      <div class="pay lookup-panel">
+        <strong>Already placed an order?</strong>
+        <form id="lookup-form" novalidate>
+          <label>Email<input id="lookup-email" type="email" autocomplete="email" placeholder="The email used for your order"></label>
+          <label>Phone number<input id="lookup-phone" type="tel" autocomplete="tel" placeholder="080 0000 0000"></label>
+          <p class="err" id="lookup-error" role="alert"></p>
+          <button class="ghost" type="submit">Find my order</button>
+        </form>
+      </div>
+      <form id="order-form" hidden novalidate>
         <div class="stubs" role="radiogroup" aria-label="Ticket type">
           <label class="stub"><input type="radio" name="ticket_type" value="male" checked><span class="l"><strong>Male</strong><small>Entry for one, 9pm till late</small></span><span class="r"><small>Male</small><b>₦2,000</b></span></label>
           <label class="stub"><input type="radio" name="ticket_type" value="female"><span class="l"><strong>Female</strong><small>Entry for one, 9pm till late</small></span><span class="r"><small>Female</small><b>₦1,000</b></span></label>
+          <label class="stub"><input type="radio" name="ticket_type" value="both"><span class="l"><strong>Both</strong><small>Choose male and female quantities</small></span><span class="r"><small>Mixed</small><b>Custom</b></span></label>
         </div>
         <label>How many tickets?<span class="qty"><button type="button" id="minus" aria-label="One less">-</button><output id="quantity">1</output><button type="button" id="plus" aria-label="One more">+</button></span></label>
+        <div id="both-quantities" hidden><label>Male quantity<input id="male-quantity" type="number" min="0" max="10" value="1"></label><label>Female quantity<input id="female-quantity" type="number" min="0" max="10" value="1"></label></div>
         <label>Full name<input id="name" required autocomplete="name" placeholder="Your name"></label>
         <label>Phone number<input id="phone" required type="tel" autocomplete="tel" placeholder="080 0000 0000"></label>
         <label>Email<input id="email" required type="email" autocomplete="email" placeholder="you@example.com"></label>
