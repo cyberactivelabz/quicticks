@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Tickets for The Vibez and Fun Party 3.0 by Hypeman Connect.">
+  <title>The Vibez and Fun Party 3.0 - Tickets</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Alfa+Slab+One&family=Bricolage+Grotesque:wght@400;600;800&family=Permanent+Marker&display=swap" rel="stylesheet">
+  <script type="module" crossorigin src="/assets/index-DVK5IMZz.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-BuJEq1Pq.css">
+</head>
+<body>
+  <main>
+    <header class="brand"><span>Hypeman <b>Connect</b></span><a href="#tickets">Get tickets</a></header>
+    <section class="hero" aria-labelledby="event-title">
+      <img class="hero-poster" src="party-poster.jpg" alt="The Vibez and Fun Party 3.0 event poster" onerror="this.hidden=true;document.querySelector('.hero-fallback').hidden=false">
+      <div class="hero-fallback" hidden>
+        <p class="pre">Hypeman Connect presents</p>
+        <p class="pre small-pre">The Vibez and Fun</p>
+        <h1 id="event-title" class="party">Party</h1>
+        <span class="ver">3.0</span>
+        <div class="when"><strong>26</strong><span><em>December</em> 2026<br>9pm</span></div>
+      </div>
+      <a class="cta" href="#tickets">Get your ticket</a>
+    </section>
+    <div class="mark" aria-hidden="true"></div>
+    <section id="lineup">
+      <h2>Who's running the night</h2>
+      <div class="cols">
+        <div class="list"><h3>Music by</h3><p>DJ Coded F</p><p>DJ Top</p><p>DJ Producer</p><p>DJ Seventy [70]</p></div>
+        <div class="list"><h3>Hypemen</h3><p>HM Laxzy</p><p>HM Lukso</p><p>HM Bolex Ika</p><p>HM MTN</p></div>
+      </div>
+      <p class="note">Vibes and fun all night. Dollars are allowed to spray.</p>
+    </section>
+    <section id="venue"><div class="venue"><h3>Aiyeyemi Palace Hotel</h3><p>Plot 2, Ogudu GRA, Ajase Ipo, Kwara State, Nigeria</p></div></section>
+    <section id="tickets">
+      <h2>Pick your ticket</h2>
+      <form id="order-form" novalidate>
+        <div class="stubs" role="radiogroup" aria-label="Ticket type">
+          <label class="stub"><input type="radio" name="ticket_type" value="male" checked><span class="l"><strong>Male</strong><small>Entry for one, 9pm till late</small></span><span class="r"><small>Male</small><b>₦2,000</b></span></label>
+          <label class="stub"><input type="radio" name="ticket_type" value="female"><span class="l"><strong>Female</strong><small>Entry for one, 9pm till late</small></span><span class="r"><small>Female</small><b>₦1,000</b></span></label>
+        </div>
+        <label>How many tickets?<span class="qty"><button type="button" id="minus" aria-label="One less">-</button><output id="quantity">1</output><button type="button" id="plus" aria-label="One more">+</button></span></label>
+        <label>Full name<input id="name" required autocomplete="name" placeholder="Your name"></label>
+        <label>Phone number<input id="phone" required type="tel" autocomplete="tel" placeholder="080 0000 0000"></label>
+        <label>Email<input id="email" required type="email" autocomplete="email" placeholder="you@example.com"></label>
+        <div class="total"><span>Total</span><b id="total">₦2,000</b></div>
+        <p class="err" id="error" role="alert"></p>
+        <button class="cta" type="submit">Continue to payment</button>
+      </form>
+      <div id="payment" hidden></div>
+    </section>
+    <footer class="site">Hypeman Connect · Ajase Ipo, Kwara State</footer>
+  </main>
+</body>
+</html>
